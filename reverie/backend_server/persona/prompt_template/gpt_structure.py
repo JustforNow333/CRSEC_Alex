@@ -16,6 +16,8 @@ openai.api_key = openai_api_key
 BASE_DELAY = 1.0
 MAX_DELAY = 60.0
 
+_embedding_cache = {}  # keyed by normalized text; add a lock here when calls go concurrent
+
 def ChatGPT_single_request(prompt):
   completion = openai.ChatCompletion.create(
     model="gpt-4o-mini", 
@@ -325,12 +327,18 @@ def get_embedding(text, model="text-embedding-ada-002"):
   if not text:
     text = "this is blank"
 
+  if text in _embedding_cache:
+    return _embedding_cache[text]
+
   # Add retry logic for API service issues
   max_retries = 3
   for attempt in range(max_retries):
     try:
-      return openai.Embedding.create(
+      embedding = openai.Embedding.create(
               input=[text], model=model)['data'][0]['embedding']
+      # TODO: this write needs a lock once embedding calls run concurrently
+      _embedding_cache[text] = embedding
+      return embedding
     except (openai.error.ServiceUnavailableError, openai.error.RateLimitError) as e:
       if attempt < max_retries - 1:
         wait = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
