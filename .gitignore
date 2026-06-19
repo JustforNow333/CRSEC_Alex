@@ -1,12 +1,19 @@
 environment/frontend_server/storage/*
 !environment/frontend_server/storage/base_the_ville_n10
 *.pyc
+__pycache__/
 .DS_Store
 
 # Local secrets — never commit
 .env
 .env.local
 *.pem
+
+# Runtime / generated files
+venv/
+reverie/backend_server/simulation_output.txt
+environment/frontend_server/temp_storage/
+reverie_diff.txt
 
 # Optional: local overrides (uncomment if you use a private local file)
 # reverie/backend_server/utils_local.py

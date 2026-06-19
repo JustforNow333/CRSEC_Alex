@@ -148,7 +148,7 @@ class ReverieServer:
 
     # Loading in all personas. 
     init_env_file = f"{sim_folder}/environment/{str(self.step)}.json"
-    init_env = json.load(open(init_env_file))
+    init_env = json.load(open(init_env_file, encoding="utf-8"))
     for persona_name in reverie_meta['persona_names']: 
       persona_folder = f"{sim_folder}/personas/{persona_name}"
       p_x = init_env[persona_name]["x"]
