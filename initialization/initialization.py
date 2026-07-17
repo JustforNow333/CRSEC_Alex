@@ -5,6 +5,7 @@ import os
 import json
 import argparse
 import re
+import shutil
 from glob import glob
 
 
@@ -53,17 +54,42 @@ def assign_profiles():
     return df
 
 
-def run_randomization():
-    seed = int(time.time())
+def run_randomization(seed=None, minority_size=2, max_draws=10000):
+    """
+    Draw agent profiles until exactly `minority_size` Grassroots Activists are
+    selected and Jennifer Moore is not among them.
+
+    Parameters
+    ----------
+    seed : int or None
+        RNG seed. If None, uses int(time.time()) (original behaviour).
+    minority_size : int
+        Target number of Grassroots Activist / Dissenter agents.
+    max_draws : int
+        Maximum rejection-sampling iterations before raising ValueError.
+
+    Returns
+    -------
+    (seed_used, df)
+    """
+    if seed is None:
+        seed = int(time.time())
     np.random.seed(seed)
     print("Seed used for this run:", seed)
 
-    while True:
+    for _ in range(max_draws):
         df = assign_profiles()
         activists = df[df["Archetype"] == "Grassroots Activist / Dissenter"]
-        # Constraint: exactly 2 grassroots activists, and Jennifer Moore cannot be one.
-        if len(activists) == 2 and "Jennifer Moore" not in activists["Agent"].values:
+        # Constraint: exactly minority_size activists, Jennifer Moore cannot be one.
+        if (len(activists) == minority_size and
+                "Jennifer Moore" not in activists["Agent"].values):
             break
+    else:
+        raise ValueError(
+            f"Could not find a sample with exactly {minority_size} Grassroots Activists "
+            f"(excluding Jennifer Moore) after {max_draws} draws. "
+            f"Try a different minority_size or increase max_draws."
+        )
 
     print("\nFinal assignment:")
     print(df.to_string(index=False))
@@ -97,7 +123,7 @@ def _extract_json_object(text: str):
 
 def _build_prompt(base_scratch, info_text, stance_row):
     return f"""
-Edit those biographies based on the language of the papers I provided and the the information summarized. Because the factors in my experiment are the level of conviction about climate change and the trust in government, make sure to explicitly mention the conviction and trust levels for each agent in the "learned" category. Change only "innate" and "learned" categories, and the "currently" category to make them aligned with our  climate change opinion experiment, but do not change the format, only the content. Here is a table indicating the agents’ stance on the scale from -1 to 1. Make sure the language reflects the agent's numerical value of the attitude, but do not include the value in the updated biography.
+Edit those biographies based on the language of the papers I provided and the the information summarized. Because the factors in my experiment are the level of conviction about climate change and the trust in government, make sure to explicitly mention the conviction and trust levels for each agent in the "learned" category. Change only "innate" and "learned" categories, and the "currently" category to make them aligned with our  climate change opinion experiment, but do not change the format, only the content. Here is a table indicating the agents' stance on the scale from -1 to 1. Make sure the language reflects the agent's numerical value of the attitude, but do not include the value in the updated biography.
 
 Stance for this agent:
 - Agent: {stance_row["Agent"]}
@@ -265,13 +291,44 @@ def main():
         default="gpt-5.2",
         help="OpenAI model name for biography rewriting.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for reproducible assignments. Defaults to int(time.time()).",
+    )
+    parser.add_argument(
+        "--minority-size",
+        type=int,
+        default=2,
+        help="Number of Grassroots Activist / Dissenter agents to select (default: 2).",
+    )
+    parser.add_argument(
+        "--out-base-name",
+        default=None,
+        help=(
+            "If set, copy --base-storage-dir to a sibling directory with this name "
+            "and run update_biographies on the copy, leaving the original untouched."
+        ),
+    )
     args = parser.parse_args()
 
-    _seed, df = run_randomization()
+    _, df = run_randomization(seed=args.seed, minority_size=args.minority_size)
+
+    base_storage_dir = os.path.abspath(args.base_storage_dir)
+
+    if args.out_base_name:
+        parent = os.path.dirname(base_storage_dir)
+        dest = os.path.join(parent, args.out_base_name)
+        shutil.copytree(base_storage_dir, dest)
+        target_dir = dest
+    else:
+        target_dir = base_storage_dir
+
     update_biographies(
         df=df,
         information_path=args.information_file,
-        base_storage_dir=os.path.abspath(args.base_storage_dir),
+        base_storage_dir=target_dir,
         model_name=args.model,
     )
 

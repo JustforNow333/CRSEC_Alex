@@ -1,0 +1,20 @@
+{
+  "fork_sim_code": "base_the_ville_n10",
+  "start_date": "February 13, 2023",
+  "curr_time": "February 13, 2023, 09:00:00",
+  "sec_per_step": 10,
+  "maze_name": "the_ville",
+  "persona_names": [
+    "Mary Smith",
+    "David Evans",
+    "Robert Brown",
+    "Andrew Williams",
+    "Tom Brown",
+    "Sarah Taylor",
+    "Sam Moore",
+    "Jennifer Moore",
+    "Linda Taylor",
+    "Bob Johnson"
+  ],
+  "step": 0
+}

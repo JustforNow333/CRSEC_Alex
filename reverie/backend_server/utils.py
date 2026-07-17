@@ -1,4 +1,11 @@
 import os
+from pathlib import Path
+
+# Load .env from project root (two levels up from backend_server)
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+if _env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_path)
 
 # Set OPENAI_API_KEY in your environment (or a local .env file — do not commit .env).
 openai_api_key = os.environ.get("OPENAI_API_KEY", "")

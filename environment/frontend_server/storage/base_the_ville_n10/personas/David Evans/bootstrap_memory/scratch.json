@@ -58,9 +58,9 @@
   "norm_importance_trigger_max": 50,
   "norm_importance_trigger_curr": 50,
   "norm_conflict": false,
-  "norm_count": 20,
+  "norm_count": 5,
   "norm_evaluate": false,
-  "act_norm_count": 20,
+  "act_norm_count": 5,
   "norm_evaluate_trigger_curr": 700,
   "norm_evaluate_trigger_max": 700
 }

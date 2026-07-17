@@ -19,7 +19,7 @@ class NormDatabase:
 
         if check_if_file_exists(f"{f_saved}/personal_norm_database.json"):
             print("GNS FUNCTION: <NormDatabase__init__norm_seed>")
-            scratch_load = json.load(open(f"{f_saved}/personal_norm_database.json"))
+            scratch_load = json.load(open(f"{f_saved}/personal_norm_database.json", encoding="utf-8"))
             for i in range(1, normSeedCount + 1, 1):
                 norm = scratch_load[f"norm_{i}"]
                 try:
@@ -56,7 +56,7 @@ class NormDatabase:
 
         if check_if_file_exists(f"{f_saved}/personal_norm_database_validity.json"):
             print("GNS FUNCTION: <NormDatabase__init__act_norm>")
-            scratch_load = json.load(open(f"{f_saved}/personal_norm_database_validity.json"))
+            scratch_load = json.load(open(f"{f_saved}/personal_norm_database_validity.json", encoding="utf-8"))
             for i in range(1, normCount + 1, 1):
                 norm = scratch_load[f"norm_{i}"]
                 try:

@@ -74,7 +74,7 @@ class ReverieServer:
       # RESUME: open existing simulation without copying. Infer step from movement files.
       if not os.path.isdir(sim_folder):
         raise FileNotFoundError(f"Cannot resume: simulation folder not found: {sim_folder}")
-      with open(f"{sim_folder}/reverie/meta.json") as json_file:
+      with open(f"{sim_folder}/reverie/meta.json", encoding="utf-8") as json_file:
         reverie_meta = json.load(json_file)
       self.fork_sim_code = reverie_meta.get("fork_sim_code", "")
       last_step = _get_last_completed_step(sim_folder)
@@ -89,7 +89,7 @@ class ReverieServer:
                           "%B %d, %Y, %H:%M:%S")
       self.curr_time = self.start_time + datetime.timedelta(seconds=(last_step + 1) * sec_per_step)
       reverie_meta["curr_time"] = self.curr_time.strftime("%B %d, %Y, %H:%M:%S")
-      with open(f"{sim_folder}/reverie/meta.json", "w") as outfile:
+      with open(f"{sim_folder}/reverie/meta.json", "w", encoding="utf-8") as outfile:
         outfile.write(json.dumps(reverie_meta, indent=2))
       init_env_file = f"{sim_folder}/environment/{last_step}.json"
       if not check_if_file_exists(init_env_file):
@@ -101,10 +101,10 @@ class ReverieServer:
       fork_folder = f"{fs_storage}/{self.fork_sim_code}"
       copyanything(fork_folder, sim_folder)
 
-      with open(f"{sim_folder}/reverie/meta.json") as json_file:
+      with open(f"{sim_folder}/reverie/meta.json", encoding="utf-8") as json_file:
         reverie_meta = json.load(json_file)
 
-      with open(f"{sim_folder}/reverie/meta.json", "w") as outfile:
+      with open(f"{sim_folder}/reverie/meta.json", "w", encoding="utf-8") as outfile:
         reverie_meta["fork_sim_code"] = fork_sim_code
         outfile.write(json.dumps(reverie_meta, indent=2))
 
@@ -148,7 +148,7 @@ class ReverieServer:
 
     # Loading in all personas. 
     init_env_file = f"{sim_folder}/environment/{str(self.step)}.json"
-    init_env = json.load(open(init_env_file))
+    init_env = json.load(open(init_env_file, encoding="utf-8"))
     for persona_name in reverie_meta['persona_names']: 
       persona_folder = f"{sim_folder}/personas/{persona_name}"
       p_x = init_env[persona_name]["x"]
@@ -173,12 +173,12 @@ class ReverieServer:
     # simulation. 
     curr_sim_code = dict()
     curr_sim_code["sim_code"] = self.sim_code
-    with open(f"{fs_temp_storage}/curr_sim_code.json", "w") as outfile: 
+    with open(f"{fs_temp_storage}/curr_sim_code.json", "w", encoding="utf-8") as outfile:
       outfile.write(json.dumps(curr_sim_code, indent=2))
     
     curr_step = dict()
     curr_step["step"] = self.step
-    with open(f"{fs_temp_storage}/curr_step.json", "w") as outfile: 
+    with open(f"{fs_temp_storage}/curr_step.json", "w", encoding="utf-8") as outfile:
       outfile.write(json.dumps(curr_step, indent=2))
 
     # ENVIRONMENT MANAGER: 
@@ -214,7 +214,7 @@ class ReverieServer:
     reverie_meta["persona_names"] = list(self.personas.keys())
     reverie_meta["step"] = self.step
     reverie_meta_f = f"{sim_folder}/reverie/meta.json"
-    with open(reverie_meta_f, "w") as outfile: 
+    with open(reverie_meta_f, "w", encoding="utf-8") as outfile:
       outfile.write(json.dumps(reverie_meta, indent=2))
 
     # Save the personas.
@@ -327,7 +327,7 @@ class ReverieServer:
         curr_dict = {}
         tester_file = fs_temp_storage + "/path_tester_env.json"
         if check_if_file_exists(tester_file): 
-          with open(tester_file) as json_file: 
+          with open(tester_file, encoding="utf-8") as json_file:
             curr_dict = json.load(json_file)
             os.remove(tester_file)
           
@@ -363,7 +363,7 @@ class ReverieServer:
         # Incrementally outputting the s_mem and saving the json file. 
         print ("= " * 15)
         out_file = fs_temp_storage + "/path_tester_out.json"
-        with open(out_file, "w") as outfile: 
+        with open(out_file, "w", encoding="utf-8") as outfile:
           outfile.write(json.dumps(s_mem, indent=2))
         print_tree(s_mem)
 
@@ -424,7 +424,7 @@ class ReverieServer:
       if env_retrieved:
         # Load the generated environment file
         try:
-          with open(curr_env_file) as json_file:
+          with open(curr_env_file, encoding="utf-8") as json_file:
             new_env = json.load(json_file)
         except:
           env_retrieved = False
@@ -504,7 +504,7 @@ class ReverieServer:
           #  "persona": {"Klaus Mueller": {"movement": [38, 12]}}, 
           #  "meta": {curr_time: <datetime>}}
           curr_move_file = f"{sim_folder}/movement/{self.step}.json"
-          with open(curr_move_file, "w") as outfile: 
+          with open(curr_move_file, "w", encoding="utf-8") as outfile:
             outfile.write(json.dumps(movements, indent=2))
 
           # Extract non-null chat logs to conversations_extracted.txt (once per conversation per step)
@@ -529,7 +529,7 @@ class ReverieServer:
                 + line_sep.join(f"{s}: {u}" for s, u in chat)
                 + line_sep
               )
-              with open(chat_log_path, "a") as cf:
+              with open(chat_log_path, "a", encoding="utf-8") as cf:
                 if self.step == 0 and len(seen_pairs) == 1:
                   header = (
                     "EXTRACTED CONVERSATIONS (live run)\n"

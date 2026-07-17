@@ -102,6 +102,9 @@ def Create(rs):
                     json.dump(response_json, fw, ensure_ascii=False)
                     pass
                 rs.personas[entrepreneur].scratch.act_norm_count = 5
+                # Persist updated norm counts to scratch.json so they survive restarts
+                scratch_out = f"{fs_storage}/{rs.sim_code}/personas/{entrepreneur}/bootstrap_memory/scratch.json"
+                rs.personas[entrepreneur].scratch.save(scratch_out)
                 norm_saved = f"{fs_storage}/{rs.sim_code}/personas/{entrepreneur}/norms"
                 rs.personas[entrepreneur].norm_database = NormDatabase(norm_saved,rs.personas[entrepreneur].scratch.norm_count,rs.personas[entrepreneur].scratch.act_norm_count,rs.personas[entrepreneur])
             else:

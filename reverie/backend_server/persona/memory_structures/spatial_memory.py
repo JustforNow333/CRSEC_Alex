@@ -16,7 +16,7 @@ class MemoryTree:
   def __init__(self, f_saved): 
     self.tree = {}
     if check_if_file_exists(f_saved): 
-      self.tree = json.load(open(f_saved))
+      self.tree = json.load(open(f_saved, encoding="utf-8"))
 
 
   def print_tree(self): 
@@ -36,8 +36,8 @@ class MemoryTree:
     
 
   def save(self, out_json):
-    with open(out_json, "w") as outfile:
-      json.dump(self.tree, outfile) 
+    with open(out_json, "w", encoding="utf-8") as outfile:
+      json.dump(self.tree, outfile)
 
 
 

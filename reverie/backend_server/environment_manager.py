@@ -50,7 +50,7 @@ class EnvironmentManager:
         """
         env_file = f"{self.environment_folder}/{step}.json"
         if check_if_file_exists(env_file):
-            with open(env_file, 'r') as f:
+            with open(env_file, 'r', encoding="utf-8") as f:
                 data = json.load(f)
                 for persona_name, info in data.items():
                     self.current_positions[persona_name] = {
@@ -89,7 +89,7 @@ class EnvironmentManager:
         """
         movement_file = f"{self.movement_folder}/{step}.json"
         if check_if_file_exists(movement_file):
-            with open(movement_file, 'r') as f:
+            with open(movement_file, 'r', encoding="utf-8") as f:
                 movement_data = json.load(f)
                 
             if "persona" in movement_data:
@@ -124,7 +124,7 @@ class EnvironmentManager:
             
         # Write environment file
         env_file = f"{self.environment_folder}/{step}.json"
-        with open(env_file, 'w') as f:
+        with open(env_file, 'w', encoding="utf-8") as f:
             json.dump(environment_data, f, indent=2)
             
         print(f"Generated environment file: {env_file}")
@@ -192,9 +192,9 @@ class EnvironmentManager:
         target_file = f"{self.environment_folder}/{target_step}.json"
         
         if check_if_file_exists(source_file):
-            with open(source_file, 'r') as f:
+            with open(source_file, 'r', encoding="utf-8") as f:
                 data = json.load(f)
-            with open(target_file, 'w') as f:
+            with open(target_file, 'w', encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             print(f"Cloned environment file from step {source_step} to {target_step}")
             return True

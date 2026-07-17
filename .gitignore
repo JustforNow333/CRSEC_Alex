@@ -10,3 +10,7 @@ environment/frontend_server/storage/*
 
 # Optional: local overrides (uncomment if you use a private local file)
 # reverie/backend_server/utils_local.py
+
+# Benchmark artifacts
+reverie/backend_server/bench.py
+reverie/backend_server/bench_results.jsonl
