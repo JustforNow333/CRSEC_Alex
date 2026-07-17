@@ -14,3 +14,6 @@ environment/frontend_server/storage/*
 # Benchmark artifacts
 reverie/backend_server/bench.py
 reverie/backend_server/bench_results.jsonl
+
+# Simulation run log (regenerated every run)
+reverie/backend_server/simulation_output.txt
