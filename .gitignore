@@ -1,19 +1,38 @@
+# ---- Simulation run data (large, regenerated) ----
 environment/frontend_server/storage/*
 !environment/frontend_server/storage/base_the_ville_n10
-*.pyc
-.DS_Store
+environment/frontend_server/temp_storage/
 
-# Local secrets — never commit
+# ---- Python ----
+*.pyc
+__pycache__/
+venv/
+*.egg-info/
+
+# ---- OS junk ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- Local secrets — never commit ----
 .env
 .env.local
 *.pem
 
-# Optional: local overrides (uncomment if you use a private local file)
+# ---- Optional: local overrides ----
 # reverie/backend_server/utils_local.py
 
-# Benchmark artifacts
+# ---- Benchmark artifacts ----
 reverie/backend_server/bench.py
+reverie/backend_server/aggregate.py
 reverie/backend_server/bench_results.jsonl
 
-# Simulation run log (regenerated every run)
+# ---- Simulation run log (regenerated every run) ----
 reverie/backend_server/simulation_output.txt
