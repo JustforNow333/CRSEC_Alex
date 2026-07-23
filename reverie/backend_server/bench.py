@@ -1,36 +1,16 @@
 #!/usr/bin/env python3
 """
-bench.py v3  --  measures the speed changes WITHOUT needing a baseline run.
+bench.py — measures speedup WITHOUT a baseline run.
 
-Run from  reverie/backend_server/ :
+Reconstructs what the original code would have cost on the same workload by
+accounting for the two known differences: temp_sleep(0.1) per request and
+duplicate embedding calls (no cache). Works on either branch.
 
+Usage:
     python bench.py --origin base_the_ville_n10 --steps 200 --label run1
     python bench.py --origin base_the_ville_n10 --steps 200 --label run1 --keep
 
-v3 changes vs v2:
-  * drives ReverieServer.run_standalone() directly (same entry point as your
-    run_headless.py) instead of faking answers to input() prompts. The old
-    approach was fragile: reverie.py's __main__ also calls Create(), which
-    prompts "Regenerate norms? (y or n)", so the canned answer list had to
-    match the prompt order exactly. Calling run_standalone() skips every
-    prompt. Note Create() with "n" is a no-op, so this is equivalent.
-  * arguments are now flags, matching run_headless.py's interface.
-
-WHY THERE'S NO BASELINE ARM
----------------------------
-The original differs from the modified code in exactly two knowable ways:
-  1. temp_sleep(0.1) once per request (it sits BEFORE the retry loop)
-  2. no embedding cache, so every repeated text costs a real API call
-So for any run we can reconstruct what the original would have cost on that
-SAME workload. Only one workload is ever involved, which removes the
-run-to-run workload lottery that makes raw A/B wall-clock comparisons useless.
-
-Works unchanged on either branch:
-  * on Alex_branch it adds the overhead back  -> reconstructs the ORIGINAL
-  * on main        it takes the overhead away -> reconstructs the MODIFIED
-Both should report the same improvement %.
-
-Results append to bench_results.jsonl for aggregating across runs.
+Results append to bench_results.jsonl.
 """
 import os, sys, time, json, shutil, argparse, atexit, subprocess, datetime
 
@@ -39,12 +19,6 @@ SERVER_SLEEP = 0.1   # reverie's per-step sleep; identical on both branches
 
 
 def _git_info():
-    """
-    Record exactly which code produced this result. Without this, a results
-    file is unattributable a month later -- a label alone does not identify
-    the code. `dirty` matters: with uncommitted edits the SHA does not fully
-    describe what ran.
-    """
     def run(*args):
         try:
             return subprocess.check_output(
@@ -54,18 +28,10 @@ def _git_info():
     return {
         "git_commit": run("rev-parse", "--short", "HEAD"),
         "git_branch": run("rev-parse", "--abbrev-ref", "HEAD"),
-        # -uno: ignore untracked files. Helper scripts sitting in the directory
-        # (aggregate.py, bench.py itself) don't change what the sim runs; only
-        # modifications to tracked files mean the SHA is not the whole story.
-        "git_dirty": bool(run("status", "--porcelain", "-uno")),
+        "git_dirty": bool(run("status", "--porcelain", "-uno")),  # -uno: ignore untracked
     }
 
-# ---------------------------------------------------------------------------
-# Patch BEFORE reverie is imported. Every consumer does
-# `from persona.prompt_template.gpt_structure import *`, which binds names at
-# import time, so they pick up the patched get_embedding only if we patch
-# first. gpt_structure imports nothing that imports it back, so this is safe.
-# ---------------------------------------------------------------------------
+# Patch BEFORE reverie is imported so consumers pick up patched functions.
 import openai
 from persona.prompt_template import gpt_structure as G
 
@@ -101,7 +67,7 @@ except Exception as e:
 
 
 def _norm_key(text):
-    """Mirror gpt_structure.get_embedding's normalization exactly."""
+    """Mirror gpt_structure.get_embedding's normalization."""
     key = text.replace("\n", " ")
     if not key:
         key = "this is blank"
@@ -238,9 +204,7 @@ def main():
     if os.path.isdir(target_path):
         shutil.rmtree(target_path)
 
-    # Imported AFTER patching, so the persona chain picks up the patched
-    # get_embedding via its `import *`.
-    from reverie import ReverieServer
+    from reverie import ReverieServer  # after patching
 
     wall0 = time.perf_counter()
 

@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-aggregate.py -- summarise bench_results.jsonl into a number you can quote.
+aggregate.py — summarise bench_results.jsonl into a quotable number.
 
-Run from the same directory as bench.py (reverie/backend_server/):
-
+Usage:
     python aggregate.py
-    python aggregate.py --steps 100        # only runs at this step count
-
-Reports the median improvement and the spread. The spread is real variation
-across workloads, not measurement error -- report it alongside the median.
+    python aggregate.py --steps 100
 """
 import json, argparse, statistics, os, sys
 
