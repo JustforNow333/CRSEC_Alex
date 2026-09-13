@@ -26,7 +26,7 @@ def get_sim_code():
         return sys.argv[1].strip()
     temp_path = os.path.join(SCRIPT_DIR, "../../environment/frontend_server/temp_storage/curr_sim_code.json")
     if os.path.isfile(temp_path):
-        with open(temp_path) as f:
+        with open(temp_path, encoding="utf-8") as f:
             return json.load(f).get("sim_code", "")
     return ""
 
@@ -36,7 +36,7 @@ def extract_chats_from_movement_file(filepath):
     Read a single movement JSON; return list of (curr_time, chat) with chat = list of [speaker, utterance].
     Dedupes by participant pair (same conversation appears for both personas).
     """
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
     meta = data.get("meta", {})
     curr_time = meta.get("curr_time", "")
@@ -103,7 +103,7 @@ def run_extract(sim_code=None):
             step_conversations.append((step, curr_time, chat))
 
     out_path = os.path.join(fs_storage, sim_code, "conversations_extracted.txt")
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write("EXTRACTED CONVERSATIONS FROM SIMULATION MOVEMENT FILES\n")
         f.write("=" * 60 + "\n")
         f.write(f"Simulation: {sim_code}\n")

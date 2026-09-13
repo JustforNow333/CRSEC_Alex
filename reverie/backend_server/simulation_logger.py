@@ -15,7 +15,7 @@ class SimulationLogger:
         
         # Create log file with timestamp
         self.start_time = datetime.datetime.now()
-        with open(self.log_file, 'w') as f:
+        with open(self.log_file, 'w', encoding="utf-8") as f:
             f.write(f"CRSEC Simulation Output Log\n")
             f.write(f"============================\n")
             f.write(f"Started: {self.start_time.strftime('%B %d, %Y, %H:%M:%S')}\n\n")
@@ -48,14 +48,14 @@ class SimulationLogger:
         self.original_stdout.flush()
         
         # Write to log file
-        with open(self.log_file, 'a') as f:
+        with open(self.log_file, 'a', encoding="utf-8") as f:
             f.write(text)
             f.flush()
     
     def flush(self):
         """Flush both console and log file"""
         self.original_stdout.flush()
-        with open(self.log_file, 'a') as f:
+        with open(self.log_file, 'a', encoding="utf-8") as f:
             f.flush()
     
     def log_warning(self, message):
