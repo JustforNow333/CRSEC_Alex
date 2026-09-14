@@ -64,6 +64,11 @@ DEFAULTS = {
 
     # Write one JSON line per call to this path. Empty string disables.
     "call_log": "",
+
+    # Send Completion.create to the server's real /v1/completions endpoint
+    # instead of re-expressing it as a chat call. 0 = off (default, the
+    # documented behaviour), 1 = on. Env: CRSEC_LOCAL_USE_NATIVE_COMPLETIONS.
+    "use_native_completions": 0,
 }
 
 CONFIG_ENV = "CRSEC_LOCAL_CONFIG"
@@ -214,6 +219,7 @@ def activate(force=False, verbose=True):
     os.environ.setdefault("OPENAI_API_KEY", cfg["api_key"])
 
     orig_chat = openai.ChatCompletion.create
+    orig_completion = openai.Completion.create
     orig_embed = openai.Embedding.create
 
     def patched_chat(*args, **kwargs):
@@ -260,6 +266,27 @@ def activate(force=False, verbose=True):
         kwargs.pop("model", None)
         kwargs.pop("stream", None)
         kwargs.pop("logprobs", None)
+
+        if cfg["use_native_completions"]:
+            # Opt-in: hit the server's real /v1/completions. The endpoint
+            # already returns .choices[0].text, so the response passes through
+            # without the _LegacyCompletion wrapper. Note the caveat in this
+            # function's docstring still applies -- Ollama applies the model's
+            # chat template to /v1/completions anyway, so this is not a
+            # guarantee of raw-completion semantics, just a different route.
+            kwargs["model"] = cfg["chat_model"]
+            kwargs["prompt"] = prompt
+            kwargs.setdefault("request_timeout", cfg["request_timeout"])
+            _clamp_tokens(kwargs, cfg["max_tokens_cap"])
+            STATS["completion_calls"] += 1
+            try:
+                out = orig_completion(**kwargs)
+                _log_call("completion_native", cfg["chat_model"], True)
+                return out
+            except Exception as exc:
+                STATS["errors"] += 1
+                _log_call("completion_native", cfg["chat_model"], False, repr(exc))
+                raise
 
         passthrough = {}
         for key in ("temperature", "max_tokens", "top_p",
@@ -324,8 +351,9 @@ def summary():
     cfg = config()
     return (
         "local_backend: chat=%d completion=%d embedding=%d errors=%d "
-        "| chat_model=%s embed_model=%s native_embed_dim=%s"
+        "| chat_model=%s embed_model=%s native_embed_dim=%s completions=%s"
         % (STATS["chat_calls"], STATS["completion_calls"],
            STATS["embedding_calls"], STATS["errors"],
-           cfg["chat_model"], cfg["embed_model"], _state["embed_dim"])
+           cfg["chat_model"], cfg["embed_model"], _state["embed_dim"],
+           "native" if cfg["use_native_completions"] else "via-chat")
     )

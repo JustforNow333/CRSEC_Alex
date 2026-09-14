@@ -26,6 +26,7 @@ Exit code 0 if stages 1-5 pass. Stage 6 never fails the run; it reports a rate.
 import argparse
 import json
 import os
+import string
 import sys
 import time
 import urllib.request
@@ -60,8 +61,38 @@ def _v_wake_up_hour(resp):
         return False
 
 
+# Codepoint ranges covering the emoji CRSEC stores in scratch.act_pronunciatio
+# and renders on the frontend map.
+_EMOJI_RANGES = (
+    (0x1F300, 0x1FAFF),   # pictographs, emoticons, transport, supplemental
+    (0x1F000, 0x1F0FF),   # mahjong, dominoes, playing cards
+    (0x2600, 0x27BF),     # misc symbols and dingbats
+    (0x2B00, 0x2BFF),     # arrows and stars
+    (0x1F1E6, 0x1F1FF),   # regional indicators (flags)
+    (0xFE00, 0xFE0F),     # variation selectors
+)
+
+
+def _has_emoji(text):
+    return any(lo <= ord(ch) <= hi for ch in text for lo, hi in _EMOJI_RANGES)
+
+
 def _v_pronunciatio(resp):
-    return len(resp.strip()) > 0
+    """
+    Deliberately stricter than run_gpt_prompt_pronunciatio's own validator.
+
+    That validator is only `len(gpt_response) != 0`, so a model that restates
+    the prompt passes it -- qwen returned "sleeping in bed" and scored 5/5.
+    The text is not harmless: __func_clean_up does `cr[:3]`, so the stored
+    pronunciatio becomes "sle" and the map renders that in place of an emoji.
+    A preflight should report whether the model can do the task, not whether
+    it can clear an assertion that happens to be vacuous.
+
+    <12 chars leaves room for up to 3 emoji plus ZWJ/variation selectors,
+    which can run several codepoints each, while still rejecting prose.
+    """
+    cr = resp.strip()
+    return 0 < len(cr) < 12 and _has_emoji(cr)
 
 
 def _v_event_triple(resp):
@@ -73,8 +104,22 @@ def _v_event_triple(resp):
         return False
 
 
+_PUNCT = string.punctuation + '"\'`*_ \t'
+
+
 def _v_yes_no(resp):
-    return resp.strip().lower().split()[:1] in (["yes"], ["no"]) if resp.strip() else False
+    """
+    Strip surrounding punctuation before comparing.
+
+    run_gpt_prompt_decide_to_talk cleans with .split("Answer in yes or no:")[-1]
+    .strip().lower() and then tests `if "yes" in ...`, so a trailing period is
+    fine there. This validator compared the bare token, so qwen's "No." scored
+    0/5 -- a false negative about the model, not a real failure.
+    """
+    first = resp.strip().lower().split()[:1]
+    if not first:
+        return False
+    return first[0].strip(_PUNCT) in ("yes", "no")
 
 
 def _v_numbered_plan(resp):
