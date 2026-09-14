@@ -61,7 +61,7 @@ ollama pull nomic-embed-text    # ~275 MB  the embedding model
 Then, from the repo:
 
 ```powershell
-cd C:\Users\burst\ResearchProject\crsec\reverie\backend_server
+cd <path-to-repo>\reverie\backend_server
 
 $env:CRSEC_LLM_BACKEND       = "local"
 $env:CRSEC_LOCAL_CHAT_MODEL  = "qwen2.5:0.5b"
@@ -284,7 +284,7 @@ ollama pull qwen2.5:0.5b
 ollama pull nomic-embed-text
 
 # 3. CRSEC dependencies, unchanged — the openai pin matters
-cd C:\Users\burst\ResearchProject\crsec
+cd <path-to-repo>
 pip install -r requirements.txt        # openai==0.27.0
 ```
 
@@ -445,7 +445,7 @@ anyone ever forks from a *completed* simulation rather than a base one.
 ## 5. Proof of concept
 
 ```powershell
-cd C:\Users\burst\ResearchProject\crsec\reverie\backend_server
+cd <path-to-repo>\reverie\backend_server
 
 $env:CRSEC_LLM_BACKEND    = "local"
 $env:CRSEC_LOCAL_CHAT_MODEL  = "qwen2.5:0.5b"
@@ -580,7 +580,7 @@ are not worth fixing at that size.
 Use the headless runner that already exists rather than the interactive loop:
 
 ```powershell
-cd C:\Users\burst\ResearchProject\crsec\reverie\backend_server
+cd <path-to-repo>\reverie\backend_server
 $env:CRSEC_LLM_BACKEND = "local"
 $env:CRSEC_LOCAL_CHAT_MODEL = "llama3.2:3b"
 python run_headless.py --origin base_the_ville_n10 --target local_llama3b_01 --steps 100
