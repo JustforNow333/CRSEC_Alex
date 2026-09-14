@@ -16,3 +16,12 @@ collision_block_id = "32125"
 
 # Verbose 
 debug = True
+
+# --- local open-weight backend (inert unless CRSEC_LLM_BACKEND=local) --------
+try:
+    import os, sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_llm"))
+    import local_backend
+    local_backend.activate()
+except Exception as _e:
+    print("local_backend not activated:", _e)

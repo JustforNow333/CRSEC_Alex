@@ -322,6 +322,13 @@ def run_sim(origin, target, steps, keep=False):
 
 
 def main():
+    # Force UTF-8 on the console. On Windows stdout/stderr default to cp1252, so
+    # a single non-ASCII persona utterance raises UnicodeEncodeError and kills
+    # the run; errors="replace" keeps a display problem from aborting it.
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+
     # Pin PYTHONHASHSEED (must be set before interpreter startup, so re-exec).
     _WANT_HASHSEED = "0"
     if os.environ.get("PYTHONHASHSEED") != _WANT_HASHSEED:

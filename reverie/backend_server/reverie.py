@@ -242,7 +242,7 @@ class ReverieServer:
       None
     """
     # Start simulation logging
-    start_simulation_logging()
+    start_simulation_logging(self.sim_code)
     
     print(f"Running simulation in standalone mode for {steps} steps...")
     print(f"Simulation: {self.sim_code}")
@@ -585,7 +585,7 @@ class ReverieServer:
       None
     """
     # Start simulation logging
-    start_simulation_logging()
+    start_simulation_logging(self.sim_code)
     
     print ("Note: The agents in this simulation package are computational")
     print ("constructs powered by generative agents architecture and LLM. We")
@@ -776,6 +776,13 @@ class ReverieServer:
 
 
 if __name__ == '__main__':
+  # Force UTF-8 on the console. On Windows stdout/stderr default to cp1252, so a
+  # single non-ASCII persona utterance raises UnicodeEncodeError and kills the
+  # run; errors="replace" means a display problem can never abort a long run.
+  for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+      _stream.reconfigure(encoding="utf-8", errors="replace")
+
   # rs = ReverieServer("base_the_ville_isabella_maria_klaus", 
   #                    "July1_the_ville_isabella_maria_klaus-step-3-1")
   # rs = ReverieServer("July1_the_ville_isabella_maria_klaus-step-3-20", 

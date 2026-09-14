@@ -1,0 +1,10 @@
+{
+  "base_url": "http://localhost:11434/v1",
+  "api_key": "local",
+  "chat_model": "qwen3.5:0.8b",
+  "embed_model": "nomic-embed-text",
+  "pad_embeddings_to": 1536,
+  "max_tokens_cap": 1024,
+  "request_timeout": 600,
+  "call_log": ""
+}
