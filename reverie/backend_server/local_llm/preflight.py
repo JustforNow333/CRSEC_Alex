@@ -26,6 +26,7 @@ Exit code 0 if stages 1-5 pass. Stage 6 never fails the run; it reports a rate.
 import argparse
 import json
 import os
+import re
 import string
 import sys
 import time
@@ -53,12 +54,124 @@ def report(stage, status, detail=""):
 # here means the same thing a pass means inside the simulation.
 # --------------------------------------------------------------------------
 
-def _v_wake_up_hour(resp):
-    try:
-        int(resp.strip().lower().split("am")[0])
+# --------------------------------------------------------------------------
+# Prompt-echo tolerance.
+#
+# These prompts are completion-shaped, but every local server here answers them
+# through a chat template, and chat-tuned models restate where the prompt left
+# off before continuing. Asked to continue "Output: (Mary Smith," qwen2.5:7b
+# replies "Output: (Mary Smith, draft, petition)" -- the correct triple, scored
+# 0/20 by the original validators, while the 3B's bare "draft, petition)"
+# scored 20/20. That gap measured verbosity, not capability, and it inverted
+# the size ordering stage 6 exists to establish.
+#
+# So a leading restatement of the prompt's own tail is removed before the
+# response reaches a validator. This deliberately makes stage 6 more forgiving
+# than the simulation: run_gpt_prompt.py's __func_clean_up parses the raw
+# string and would still reject the echoed form. The two questions are
+# different -- "can this model do the task" (stage 6) and "do CRSEC's parsers
+# survive this model's phrasing" (a clean-up concern) -- and conflating them is
+# what produced the inverted ranking. The per-probe line reports how many
+# responses needed stripping, so the second question stays visible.
+# --------------------------------------------------------------------------
+
+def _norm(text):
+    """
+    Lowercase, collapse whitespace, and return (normalized, offsets) where
+    offsets[i] is the index in `text` of normalized character i.
+
+    Comparing on this form lets an echo match despite the whitespace and casing
+    a chat model adds ("Output:(Mary Smith," / "output: (mary smith,"), while
+    the offsets map the match length back onto the untouched original.
+    """
+    out, offsets, prev_space = [], [], True
+    for i, ch in enumerate(text):
+        if ch.isspace():
+            if prev_space:
+                continue
+            out.append(" ")
+            prev_space = True
+        else:
+            out.append(ch.lower())
+            prev_space = False
+        offsets.append(i)
+    return "".join(out), offsets
+
+
+# Below this many characters a "match" is coincidence rather than an echo --
+# e.g. daily_plan's prompt ends in "1)", which is also how a correct answer
+# legitimately starts.
+_MIN_ECHO = 4
+
+
+def _strip_prompt_echo(resp, prompt):
+    """
+    Drop a leading restatement of the prompt's tail from `resp`.
+
+    Takes the longest suffix of the prompt that the response begins with, so a
+    model that echoes the entire prompt is handled by the same rule as one that
+    echoes the last few words. Returns `resp` unchanged when nothing matches.
+    """
+    n_resp, offsets = _norm(resp)
+    n_prompt, _ = _norm(prompt)
+    n_prompt = n_prompt.rstrip()
+    for k in range(len(n_prompt), _MIN_ECHO - 1, -1):
+        if n_resp.startswith(n_prompt[-k:]):
+            return resp[offsets[k - 1] + 1:] if k <= len(offsets) else ""
+    return resp
+
+def _forms(resp, prompt):
+    """
+    The response with a prompt echo removed, plus the untouched original.
+
+    Validating both keeps the strip strictly additive -- it can turn a fail
+    into a pass but never the reverse -- so no probe scores worse than it did
+    before echo tolerance existed.
+    """
+    cleaned = _strip_prompt_echo(resp, prompt)
+    return (cleaned, resp) if cleaned != resp else (resp,)
+
+
+# A wake-up hour is a 1-2 digit number in 0..23. Anything longer is a year or
+# an id, and anything larger is the "45 year old" from the persona blurb.
+_DIGITS = re.compile(r"\d+")
+
+# An hour written as pm, immediately after the match. run_gpt_prompt's clean-up
+# is int(resp.split("am")[0]), which rejects "6pm" outright, and in this prompt
+# a pm hour is almost always the model reciting the "goes to bed around 10pm"
+# it was given rather than answering. Skipping those keeps the scan from
+# crediting the bedtime as the wake-up hour.
+_PM = re.compile(r"\s*(?::\d{2})?\s*p\.?\s*m\.?", re.I)
+
+
+def _hour_somewhere(resp):
+    for m in _DIGITS.finditer(resp):
+        tok = m.group(0)
+        if len(tok) > 2 or not 0 <= int(tok) <= 23:
+            continue
+        if _PM.match(resp, m.end()):
+            continue
         return True
-    except Exception:
-        return False
+    return False
+
+
+def _v_wake_up_hour(resp, prompt):
+    """
+    Accept an hour appearing anywhere in the response, not only at position 0.
+
+    The original validator was run_gpt_prompt_wake_up_hour's own clean-up,
+    int(resp.strip().lower().split("am")[0]), which needs the digits to be the
+    very first thing in the string. "Sam Moore's wake up hour: 6am" and "He
+    wakes up at 6am" are both the right answer and both failed it.
+
+    Scanning for a number anywhere is only safe once the echo is gone: the
+    prompt itself contains "45 year old" and "goes to bed around 10pm", so a
+    model that restates it would otherwise be credited with a 10am wake-up.
+    That is why the stripped form is tried first and the raw form only as a
+    fallback -- and why the raw fallback is the last resort rather than the
+    thing being scanned.
+    """
+    return any(_hour_somewhere(f) for f in _forms(resp, prompt))
 
 
 # Codepoint ranges covering the emoji CRSEC stores in scratch.act_pronunciatio
@@ -77,7 +190,12 @@ def _has_emoji(text):
     return any(lo <= ord(ch) <= hi for ch in text for lo, hi in _EMOJI_RANGES)
 
 
-def _v_pronunciatio(resp):
+def _emoji_only(resp):
+    cr = resp.strip()
+    return 0 < len(cr) < 12 and _has_emoji(cr)
+
+
+def _v_pronunciatio(resp, prompt):
     """
     Deliberately stricter than run_gpt_prompt_pronunciatio's own validator.
 
@@ -89,17 +207,60 @@ def _v_pronunciatio(resp):
     it can clear an assertion that happens to be vacuous.
 
     <12 chars leaves room for up to 3 emoji plus ZWJ/variation selectors,
-    which can run several codepoints each, while still rejecting prose.
+    which can run several codepoints each, while still rejecting prose. The
+    echo strip is what lets "Emoji: <emoji>" through without widening that
+    budget for everyone.
+    """
+    return any(_emoji_only(f) for f in _forms(resp, prompt))
+
+
+def _triple_arity(resp):
+    """
+    (number of non-empty comma-separated parts, whether the answer is bracketed).
+
+    The tuple ends at the first ")"; anything before the last "(" is lead-in
+    prose, as in "The answer is (Mary Smith, draft, petition)". Arity 0 means
+    a part was empty, which disqualifies the response whatever its length.
     """
     cr = resp.strip()
-    return 0 < len(cr) < 12 and _has_emoji(cr)
+    if not cr:
+        return 0, False
+    body = cr.split(")")[0].rsplit("(", 1)[-1]
+    parts = [i.strip() for i in body.split(",")]
+    if not all(parts):
+        return 0, False
+    return len(parts), ("(" in cr or ")" in cr)
 
 
-def _v_event_triple(resp):
+def _v_event_triple(resp, prompt):
+    """
+    Accept the 2-part continuation the prompt asks for ("draft, petition)") or
+    a complete 3-part tuple ("(Mary Smith, draft, petition)").
+
+    Both are the same answer; the second just restates the subject the prompt
+    already supplied. The in-simulation validator requires exactly 2 because it
+    parses a continuation, but a model that emits the whole tuple has
+    demonstrably done the extraction, which is what stage 6 asks about.
+
+    The two cases have to be told apart *before* the echo is stripped, not
+    after. Once "Output: (Mary Smith," is removed, a correct
+    "(Mary Smith, draft, petition)" and an over-long
+    "(Mary Smith, draft, a petition, about emissions)" both read as three
+    parts. So: if the echo matched, the subject is already accounted for and
+    the remainder must be exactly 2 parts; only an unstripped response is
+    allowed the 3-part reading.
+
+    A 3-part answer must also be bracketed. Without that, any two-comma
+    sentence parses as a triple -- "Mary Smith is drafting a petition, at the
+    office, alone" -- which would inflate the score for exactly the models the
+    sweep is trying to rule out.
+    """
     try:
-        cr = resp.strip()
-        parts = [i.strip() for i in cr.split(")")[0].split(",")]
-        return len(parts) == 2
+        cleaned = _strip_prompt_echo(resp, prompt)
+        if cleaned != resp and _triple_arity(cleaned)[0] == 2:
+            return True
+        arity, bracketed = _triple_arity(resp)
+        return arity == 2 or (arity == 3 and bracketed)
     except Exception:
         return False
 
@@ -107,22 +268,31 @@ def _v_event_triple(resp):
 _PUNCT = string.punctuation + '"\'`*_ \t'
 
 
-def _v_yes_no(resp):
-    """
-    Strip surrounding punctuation before comparing.
-
-    run_gpt_prompt_decide_to_talk cleans with .split("Answer in yes or no:")[-1]
-    .strip().lower() and then tests `if "yes" in ...`, so a trailing period is
-    fine there. This validator compared the bare token, so qwen's "No." scored
-    0/5 -- a false negative about the model, not a real failure.
-    """
+def _leading_yes_no(resp):
     first = resp.strip().lower().split()[:1]
     if not first:
         return False
     return first[0].strip(_PUNCT) in ("yes", "no")
 
 
-def _v_numbered_plan(resp):
+def _v_yes_no(resp, prompt):
+    """
+    Strip surrounding punctuation before comparing.
+
+    run_gpt_prompt_decide_to_talk cleans with .split("Answer in yes or no:")[-1]
+    .strip().lower() and then tests `if "yes" in ...`, so a trailing period is
+    fine there. This validator compared the bare token, so qwen's "No." scored
+    0/5 -- a false negative about the model, not a real failure. The echo strip
+    covers the other half of the same problem, "answer in yes or no: No".
+    """
+    return any(_leading_yes_no(f) for f in _forms(resp, prompt))
+
+
+def _v_numbered_plan(resp, prompt):
+    """
+    Counted on the raw response: a restated prefix sits on line 1 and simply
+    makes that line uncounted, so the echo cannot hide the numbering.
+    """
     lines = [l for l in resp.strip().split("\n") if l.strip()]
     numbered = [l for l in lines if l.strip()[0].isdigit()]
     return len(numbered) >= 3
@@ -170,6 +340,15 @@ def main():
                     help="run the validity probes N times and average")
     ap.add_argument("--skip-validity", action="store_true")
     args = ap.parse_args()
+
+    # The pronunciatio probe prints emoji back to the console. On Windows that
+    # console is cp1252, so a model that answers this probe *correctly* is what
+    # crashes the report. Degrade unencodable characters instead of dying.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
     os.environ["CRSEC_LLM_BACKEND"] = "local"
     cfg = local_backend.config()
@@ -277,6 +456,7 @@ def main():
     per_probe = []
     for name, prompt, params, validator in PROBES:
         ok = 0
+        echoed = 0
         sample = ""
         for _ in range(args.repeat):
             try:
@@ -291,12 +471,18 @@ def main():
                 sample = sample or ("ERROR " + repr(exc)[:60])
             if not sample:
                 sample = out.strip().replace("\n", " / ")[:52]
-            if validator(out):
+            if _strip_prompt_echo(out, prompt) != out:
+                echoed += 1
+            # Validators take the prompt so each can decide how much of a
+            # restated prefix to forgive; see _strip_prompt_echo.
+            if validator(out, prompt):
                 ok += 1
         total += args.repeat
         passed += ok
-        per_probe.append((name, ok, args.repeat, sample))
-        print("   %-16s %d/%d valid   %s" % (name, ok, args.repeat, sample))
+        per_probe.append((name, ok, args.repeat, echoed, sample))
+        note = "  (echoed prompt %d/%d)" % (echoed, args.repeat) if echoed else ""
+        print("   %-16s %d/%d valid   %s%s"
+              % (name, ok, args.repeat, sample, note))
 
     rate = 100.0 * passed / total if total else 0.0
     print("-" * 68)
