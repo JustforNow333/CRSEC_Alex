@@ -23,6 +23,21 @@ ACTIVATION IS OPT-IN. If the environment variable CRSEC_LLM_BACKEND is not set t
 original OpenAI behaviour. Nothing here can change results on a run that does not
 ask for it.
 
+Two of the adaptations change what CRSEC sees rather than only where the request
+goes, so they are named here rather than left to be discovered in the diff:
+
+    max_tokens_floor    raises budgets too small for a model that writes a
+                        sentence of preamble before answering
+    strip_prompt_echo   removes a restated prompt tail from a completion
+                        response
+
+Both exist because CRSEC's prompts and parsers were calibrated against a model
+that answers tersely and in-format. Both are config-gated, both default on, and
+both are counted in STATS and reported by summary(), because a run that needed a
+great deal of adaptation is a different scientific claim from one that needed
+none. They live here, at the boundary, so that everything above them -- the
+simulation and the preflight that vouches for it -- sees identical bytes.
+
 Usage:
     import local_backend
     local_backend.activate()          # no-op unless CRSEC_LLM_BACKEND=local
@@ -59,6 +74,22 @@ DEFAULTS = {
     # context window of small models once the prompt is counted. 0 = no clamp.
     "max_tokens_cap": 1024,
 
+    # Floor on max_tokens, the mirror image of the cap. CRSEC's gpt_param
+    # budgets are calibrated for a model that answers with no preamble: 27 of
+    # the 51 budgets in run_gpt_prompt.py are under 32 (one at 5, eighteen at
+    # 15, three at 3). A chat-tuned local model spends those tokens on "Given
+    # that Sam Moore is" and gets truncated before it reaches an answer, so the
+    # validator sees preamble, fails, and after five retries the fail-safe
+    # constant is stored. 0 = no floor.
+    "max_tokens_floor": 32,
+
+    # Remove a restated prompt tail from completion responses. Chat-tuned
+    # models answer a completion-shaped prompt by echoing where it left off:
+    # asked to continue "Output: (Mary Smith," they reply "Output: (Mary Smith,
+    # draft, petition)". The answer is correct and CRSEC's __func_clean_up
+    # still cannot parse it. 0 = off.
+    "strip_prompt_echo": 1,
+
     # Seconds. Local CPU inference is far slower than a hosted API.
     "request_timeout": 600,
 
@@ -83,6 +114,12 @@ STATS = {
     "completion_calls": 0,
     "embedding_calls": 0,
     "errors": 0,
+    # How much adaptation the run needed. Both are reported by summary(): a
+    # run that leans heavily on either one is a run whose model does not
+    # natively fit CRSEC's prompts, and that belongs in the write-up rather
+    # than hidden inside the shim.
+    "echo_strips": 0,
+    "token_floor_raises": 0,
 }
 
 
@@ -148,6 +185,96 @@ def _clamp_tokens(kwargs, cap):
     if cap and kwargs.get("max_tokens") and kwargs["max_tokens"] > cap:
         kwargs["max_tokens"] = cap
     return kwargs
+
+
+def _floor_tokens(kwargs, floor):
+    """
+    Raise a max_tokens budget that is too small to reach an answer.
+
+    The mirror of _clamp_tokens, and it exists for the same reason: CRSEC's
+    numbers were tuned against a model whose behaviour differs from the one now
+    answering. The cap protects small context windows from CRSEC asking for too
+    much; the floor protects small budgets from a chat-tuned model that spends
+    them on preamble.
+
+    Only an explicit budget is raised. A call that never set max_tokens is
+    left alone rather than being given one it did not ask for.
+    """
+    if floor and kwargs.get("max_tokens") and kwargs["max_tokens"] < floor:
+        kwargs["max_tokens"] = floor
+        STATS["token_floor_raises"] += 1
+    return kwargs
+
+
+def _norm(text):
+    """
+    Lowercase, drop whitespace entirely, and return (normalized, offsets)
+    where offsets[i] is the index in `text` of normalized character i.
+
+    Whitespace is dropped rather than collapsed because a chat model rewrites
+    it freely: "Output: (Mary Smith," comes back as "Output:(Mary Smith," or
+    with the newline moved. Collapsing runs to a single space still fails to
+    match a space against no space at all, which is the most common form of
+    the difference.
+
+    The offsets map the match length back onto the untouched original, so what
+    is returned to CRSEC is the model's own text with a prefix removed and
+    nothing else rewritten.
+    """
+    out, offsets = [], []
+    for i, ch in enumerate(text):
+        if ch.isspace():
+            continue
+        out.append(ch.lower())
+        offsets.append(i)
+    return "".join(out), offsets
+
+
+# Below this many characters a "match" is coincidence rather than an echo.
+# Some CRSEC prompts end in a bare "1)" or ":" that a correct answer may also
+# legitimately begin with.
+_MIN_ECHO = 4
+
+
+def strip_prompt_echo(resp, prompt):
+    """
+    Drop a leading restatement of the prompt's tail from a completion response.
+
+    Takes the longest suffix of the prompt that the response begins with, so a
+    model that echoes the whole prompt is handled by the same rule as one that
+    echoes the last few words. Returns `resp` unchanged when nothing matches,
+    which is the common case for models that answer directly.
+
+    Why this belongs here and not in a validator: run_gpt_prompt.py's
+    __func_clean_up functions parse the raw string. If the tolerance lives in
+    the preflight's copy of those validators, the preflight reports a model as
+    usable while the simulation it is vouching for still fails on every one of
+    those responses and silently stores the fail-safe. Adapting the response at
+    the shim means the preflight and the simulation see the same bytes, so a
+    stage 6 number means what it claims to mean.
+
+    This does modify what the model said. It is counted in STATS so a run can
+    report how often it fired, and it is switchable via strip_prompt_echo.
+    """
+    if not resp or not prompt:
+        return resp
+    n_resp, offsets = _norm(resp)
+    n_prompt, _ = _norm(prompt)
+    n_prompt = n_prompt.rstrip()
+    for k in range(len(n_prompt), _MIN_ECHO - 1, -1):
+        if n_resp.startswith(n_prompt[-k:]):
+            return resp[offsets[k - 1] + 1:] if k <= len(offsets) else ""
+    return resp
+
+
+def _adapt_completion_text(text, prompt, cfg):
+    """Response-side adaptation for the legacy completion path."""
+    if not cfg["strip_prompt_echo"]:
+        return text
+    stripped = strip_prompt_echo(text, prompt)
+    if stripped != text:
+        STATS["echo_strips"] += 1
+    return stripped
 
 
 def _log_call(kind, model, ok, detail=""):
@@ -230,6 +357,10 @@ def activate(force=False, verbose=True):
         if "max_completion_tokens" in kwargs:
             kwargs.setdefault("max_tokens", kwargs.pop("max_completion_tokens"))
             kwargs.pop("max_completion_tokens", None)
+        # Floor first, then cap: if the two ever cross, the cap wins, because
+        # exceeding the context window is a hard failure and a short budget is
+        # only a quality one.
+        _floor_tokens(kwargs, cfg["max_tokens_floor"])
         _clamp_tokens(kwargs, cfg["max_tokens_cap"])
         kwargs.setdefault("request_timeout", cfg["request_timeout"])
         # Not universally supported by local servers; harmless to drop.
@@ -277,10 +408,18 @@ def activate(force=False, verbose=True):
             kwargs["model"] = cfg["chat_model"]
             kwargs["prompt"] = prompt
             kwargs.setdefault("request_timeout", cfg["request_timeout"])
+            _floor_tokens(kwargs, cfg["max_tokens_floor"])
             _clamp_tokens(kwargs, cfg["max_tokens_cap"])
             STATS["completion_calls"] += 1
             try:
                 out = orig_completion(**kwargs)
+                # Rewrite in place so the server's own response object, and
+                # every field on it, reaches the caller unchanged apart from
+                # the echo. The choices are dict-like in openai 0.27.
+                for choice in out["choices"]:
+                    adapted = _adapt_completion_text(choice["text"], prompt, cfg)
+                    if adapted != choice["text"]:
+                        choice["text"] = adapted
                 _log_call("completion_native", cfg["chat_model"], True)
                 return out
             except Exception as exc:
@@ -293,6 +432,7 @@ def activate(force=False, verbose=True):
                     "frequency_penalty", "presence_penalty", "stop"):
             if key in kwargs and kwargs[key] is not None:
                 passthrough[key] = kwargs[key]
+        _floor_tokens(passthrough, cfg["max_tokens_floor"])
         _clamp_tokens(passthrough, cfg["max_tokens_cap"])
 
         STATS["completion_calls"] += 1
@@ -304,6 +444,7 @@ def activate(force=False, verbose=True):
                 **passthrough
             )
             text = resp["choices"][0]["message"]["content"]
+            text = _adapt_completion_text(text, prompt, cfg)
             _log_call("completion", cfg["chat_model"], True)
             return _LegacyCompletion(text)
         except Exception as exc:
@@ -351,9 +492,14 @@ def summary():
     cfg = config()
     return (
         "local_backend: chat=%d completion=%d embedding=%d errors=%d "
-        "| chat_model=%s embed_model=%s native_embed_dim=%s completions=%s"
+        "| adapted: echo_strips=%d token_floor_raises=%d "
+        "| chat_model=%s embed_model=%s native_embed_dim=%s completions=%s "
+        "echo_strip=%s token_floor=%s"
         % (STATS["chat_calls"], STATS["completion_calls"],
            STATS["embedding_calls"], STATS["errors"],
+           STATS["echo_strips"], STATS["token_floor_raises"],
            cfg["chat_model"], cfg["embed_model"], _state["embed_dim"],
-           "native" if cfg["use_native_completions"] else "via-chat")
+           "native" if cfg["use_native_completions"] else "via-chat",
+           "on" if cfg["strip_prompt_echo"] else "off",
+           cfg["max_tokens_floor"] or "off")
     )
