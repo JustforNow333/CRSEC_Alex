@@ -57,17 +57,28 @@ State of the fork as of this writing:
 | `speedup-only` | `gpt_structure.py` + cache test | PR open |
 | `tooling-replay-bench` | `replay.py`, `bench.py`, `aggregate.py` | PR open |
 
-Upstream `main` is still at `bcfad74`, so neither PR has been merged. **Branch the
-local backend off `main`, not off `Alex_branch`.** A local-model PR that also
-carries the speedup and the tooling is three ideas in one branch, which is the
-problem the branch-per-PR split already solved once.
+Upstream `main` is still at `bcfad74`, so neither PR has been merged.
+
+**This work lives on `local-models`, branched off `tooling-replay-bench`** (merge
+base `26d76c0`), not off `main` as an earlier draft of this document advised and
+not off `Alex_branch`. The reason is `replay_validity.py`, which is the better of
+the two validity measurements below and needs `replay.py` to exist. The cost is
+that `local-models` cannot merge until the `tooling-replay-bench` PR does, and
+that a reviewer reading `local-models` against `main` sees the tooling commits as
+well. Diff it against `tooling-replay-bench` instead.
+
+It does not carry `Alex_branch`: no `gpt_structure.py` caching speedup and no
+`.env` loading — which matters in section 3. It *does* carry `run_headless.py`
+and `run_sweep.py`, but as copies added here by `00c502e` rather than inherited;
+they are on `Alex_branch` too, and the two copies can drift.
 
 Two pieces of existing tooling matter here and are used below rather than
 duplicated:
 
-- **`run_headless.py` / `run_sweep.py`** (`Alex_branch`) — a headless launcher
-  and a parallel sweep supervisor driven by a `configs.json` of
-  `{origin, target, steps}`. A model sweep should go through these.
+- **`run_headless.py` / `run_sweep.py`** (on this branch, and on `Alex_branch`)
+  — a headless launcher and a parallel sweep supervisor driven by a
+  `configs.json` of `{origin, target, steps}`. A model sweep should go through
+  these.
 - **`replay.py`** (`tooling-replay-bench`) — records every OpenAI request and
   response from a run to `recording.jsonl`. That recording turns out to be the
   best available benchmark for a local model, and `replay_validity.py` uses it.
@@ -173,16 +184,22 @@ rather than fail confusingly later.
 
 ## 3. Wire it up
 
-Copy the `local_llm/` folder to `reverie/backend_server/local_llm/`, then make
-one edit.
+The `local_llm/` folder is already at `reverie/backend_server/local_llm/` on this
+branch, and the one edit below is already applied to
+`reverie/backend_server/utils.py`. It is reproduced here because it is the whole
+integration, and because anyone porting this to another branch needs it.
 
 **Edit: `reverie/backend_server/utils.py`**, appended at the end.
 
-Note that `Alex_branch` already modifies the top of this file to load `.env`
-through `python-dotenv`. That is useful here: it means `CRSEC_LOCAL_*` settings
-can live in `.env` alongside the API key rather than being re-exported into
-every shell. (Separately: `python-dotenv` is imported there but is not in
-`requirements.txt` — worth fixing, unrelated to this work.)
+**There is no `.env` loading on this branch.** An earlier draft of this document
+said `python-dotenv` loads `.env` at the top of `utils.py`, so `CRSEC_LOCAL_*`
+settings could live there alongside the API key. That is true of `Alex_branch`,
+which this branch is not based on — `local-models` comes off
+`tooling-replay-bench`, and `utils.py` here reads `OPENAI_API_KEY` straight from
+`os.environ` with no dotenv import. So every `CRSEC_LOCAL_*` setting has to be
+exported into the shell, or put in `local_models.json`, or passed by whatever
+launches the run. A sweep script setting them per-run in the child environment is
+the practical option; see section 6.
 
 ```python
 # --- local open-weight backend (inert unless CRSEC_LLM_BACKEND=local) --------
@@ -239,6 +256,16 @@ Every key can be overridden by an environment variable named
 `CRSEC_LOCAL_<KEY>`, e.g. `CRSEC_LOCAL_CHAT_MODEL`. That is what makes a model
 sweep a loop rather than a series of file edits.
 
+Three keys are deliberately *not* in that file — `strip_prompt_echo`,
+`max_tokens_floor` and `use_native_completions`. Their defaults live in
+`DEFAULTS` in `local_backend.py`, with the reasoning next to them, and they are
+set by environment variable when you want to change them:
+
+```powershell
+$env:CRSEC_LOCAL_STRIP_PROMPT_ECHO = "0"    # default 1 (on)
+$env:CRSEC_LOCAL_MAX_TOKENS_FLOOR  = "0"    # default 32; 0 disables
+```
+
 ### What the shim does, and why
 
 | Behaviour | Reason |
@@ -258,6 +285,32 @@ store and `retrieve.cos_sim` would start raising on the mismatch. Padding to
 1536 removes that failure mode, and it is free: appending zeros changes neither
 the dot product nor either L2 norm, so cosine similarity is exactly preserved.
 There is a test asserting that.
+
+### Two adapters that change what CRSEC sees
+
+Everything in the table above changes where a request goes or how it is
+addressed. The next two change the bytes CRSEC reads back, which is a different
+kind of intervention and is called out separately for that reason. Both are
+config-gated, both default on, and both are counted in `STATS` and printed by
+`summary()` at the end of every run, so a run that needed heavy adaptation is
+distinguishable from one that needed none.
+
+| Adapter | Default | What it does | Why |
+|---|---|---|---|
+| `strip_prompt_echo` | on | When a completion response begins with a suffix of the prompt, removes that prefix before returning. Matching ignores case and whitespace; below 4 characters a match is treated as coincidence. Completion path only. | Chat-tuned models answer a completion-shaped prompt by restating where it left off. Asked to continue `Output: (Mary Smith,`, qwen2.5:7b replies `Output: (Mary Smith, draft, petition)` — the correct triple, which `__func_clean_up` then parses as three parts and rejects. Measured on stage 6, this took qwen2.5:7b's `event_triple` from 0/20 to 20/20. |
+| `max_tokens_floor` | 32 | Raises an explicit `max_tokens` below the floor. The mirror of `max_tokens_cap`; floor applied first, cap last, so if they cross the cap wins. A call that set no budget is left alone. | CRSEC's budgets assume a model that answers without preamble: 27 of the 51 `gpt_param` dicts in `run_gpt_prompt.py` are under 32, one at 5 and eighteen at 15. A local model spends those tokens on *"Given that Sam Moore is"* and is cut off before the answer. |
+
+**Why these live in the shim and not in the preflight's validators.** They were
+briefly implemented as tolerance inside `preflight.py`, which was wrong: stage 6
+then forgave what `run_gpt_prompt.py` still could not parse, so it reported
+qwen2.5:7b at 20/20 on a probe the real simulation would fail every time. An
+adapter at the boundary is seen by the simulation and the preflight alike, so a
+stage 6 number describes what a run will actually get.
+
+**What they do not fix.** `strip_prompt_echo` matches a literal suffix. A model
+that restates the prompt *in its own words* — prompt ends `wake up hour:`, model
+writes `wake up hour is 6:00 AM.` — is not echoing and is not touched. That
+failure is unresolved for every local model tested; see `local_llm/model_ladder.md`.
 
 ### One thing that is *not* a problem
 
@@ -285,37 +338,63 @@ $env:CRSEC_LLM_BACKEND    = "local"
 $env:CRSEC_LOCAL_CHAT_MODEL  = "qwen2.5:0.5b"
 $env:CRSEC_LOCAL_EMBED_MODEL = "nomic-embed-text"
 
-python local_llm/test_local_backend.py     # 16 offline tests, no server needed
+python local_llm/test_local_backend.py     # 28 offline tests, no server needed
 python local_llm/preflight.py --repeat 5
 ```
 
 `preflight.py` reports six stages:
 
 ```
-[PASS] 1 server reachable       2 model(s) served
+[PASS] 1 server reachable       6 model(s) served
 [PASS] 2 models present         qwen2.5:0.5b, nomic-embed-text
-[PASS] 3 chat path              1.2s, 'ready'
-[PASS] 4 legacy completion      0.9s, 'ready'
+[PASS] 3 chat path              3.7s, 'ready'
+[PASS] 4 legacy completion      0.0s, 'waiting'
 [PASS] 5 embedding path         native=768 padded=1536 deterministic=True
 --------------------------------------------------------------------
 6  prompt validity (5 attempt(s) per probe)
-   wake_up_hour     5/5 valid   7 am
-   event_triple     2/5 valid   (drafting, a petition)
-   pronunciatio     5/5 valid   📝🌍
-   decide_to_talk   4/5 valid   yes
-   daily_plan       1/5 valid   Sam wakes up and ...
-   overall prompt validity: 17/25 = 68%
+--------------------------------------------------------------------
+   wake_up_hour     0/5 valid   Sam Moore's wake up hour is usually around 3:30 PM.   (budget raised 5/5)
+   event_triple     1/5 valid   Drafting, petition  (budget raised 5/5)
+   pronunciatio     1/5 valid   辗转睡眠  (budget raised 5/5)
+   decide_to_talk   5/5 valid   Yes.  (budget raised 5/5)
+   daily_plan       4/5 valid   In 5-7:00 AM, Sam Moore should prepare his morning r
+--------------------------------------------------------------------
+   overall prompt validity: 11/25 = 44%
+   verdict: Not usable for results. ...
+
+local_backend: chat=1 completion=26 embedding=2 errors=0 | adapted: echo_strips=0 token_floor_raises=22 | chat_model=qwen2.5:0.5b embed_model=nomic-embed-text native_embed_dim=768 completions=via-chat echo_strip=on token_floor=32
 ```
+
+That is a real 0.5B run, and 44% is the right answer for a 0.5B.
 
 Stages 1–5 are the pipeline. Stage 6 runs five real CRSEC prompts through the
 real validators — the `func_validate` logic is copied verbatim out of the nested
 closures in `run_gpt_prompt.py`, so a pass here means what a pass means inside
-the simulation.
+the simulation. There is one deliberate divergence: `pronunciatio` is checked
+more strictly than the simulation checks it, because the real validator is only
+`len(gpt_response) != 0` and passes any prose at all. Being stricter can only
+understate a model, never flatter it.
+
+**The parenthetical notes say how much adapting the answer needed.** They are
+the shim's `STATS` counters read as a delta across each probe: `echo stripped
+n/N` means `strip_prompt_echo` fired, `budget raised n/N` means
+`max_tokens_floor` did. A probe that only passes with a high strip count is
+passing on the strength of `local_backend.py` rather than the model, and the
+last line repeats the totals for the whole run alongside the adapter settings
+that produced them. Quote that line in anything you report.
 
 **Read stage 6, not stages 1–5.** Rough reading of the number: above 90% is
 comparable to the hosted models; 60–90% means a meaningful share of the run will
 be fail-safe defaults and it is a wiring proof rather than a result; below 60%
 means the simulation would complete while being mostly hardcoded constants.
+
+**One probe is broken for every local model tested, and it is not the model's
+fault.** `wake_up_hour` scores 0–1 out of 20 on all five models measured so far.
+With the budget raised the hour is usually present in the response and is still
+never parsed, because the model paraphrases the prompt rather than continuing it.
+Expect every persona to get the fail-safe wake hour of 8. Full numbers, including
+the control that separates this from truncation and a second model family that
+rules out a Qwen-specific cause, are in `local_llm/model_ladder.md`.
 
 If you have no model downloaded yet, or want to test the pipeline in isolation,
 there is a fake server that needs no model at all:
@@ -474,10 +553,16 @@ The experiment is not "does it run locally." It is a comparison, and it needs a
 control. Suggested shape:
 
 1. **Establish the floor.** Run `preflight.py --repeat 20` across the size
-   ladder (0.5B, 1B, 3B, 9B, 20B) and plot prompt validity against parameter
-   count. This is cheap, takes minutes per model, and tells you the smallest
-   model that can execute CRSEC's prompt formats at all. Everything below that
-   line is unusable regardless of how interesting its social reasoning might be.
+   ladder and plot prompt validity against parameter count. This is cheap, takes
+   minutes per model, and tells you the smallest model that can execute CRSEC's
+   prompt formats at all. Everything below that line is unusable regardless of
+   how interesting its social reasoning might be. Partly done already:
+   `local_llm/model_ladder.md` has qwen2.5 at 0.5B/1.5B/3B/7B and llama3.2:3B at
+   `--repeat 20`. Two cautions it establishes. Validity does *not* rise
+   monotonically with size — qwen2.5:1.5b scores highest of the four — so a
+   ladder is not a substitute for measuring the model you intend to use. And at
+   3B, family mattered far more than size: llama3.2:3b scores 1/20 on
+   `event_triple` where qwen2.5:3b scores 20/20.
 2. **Replicate the existing condition.** Re-run the current experiment with the
    smallest model that clears the floor, holding seeds, initialisation and the
    evaluator fixed. Report the fail-safe rate alongside the tipping-point result.
@@ -522,6 +607,9 @@ local_llm/
   replay_validity.py      validity + retrieval benchmark vs a replay.py recording
   fail_safe_monitor.py    counts fail-safe substitutions during a real run
   mock_server.py          fake OpenAI-compatible server, needs no model
-  test_local_backend.py   16 offline tests, no server or network
-run_local.ps1             sets the environment and runs preflight
+  test_local_backend.py   28 offline tests, no server or network
+  model_ladder.md         measured results: five models, two families, what
+                          the adapters buy and what is still broken
+reverie/backend_server/run_local.ps1
+                          sets the environment and runs preflight
 ```
