@@ -46,6 +46,119 @@ with a size sweep, before anything gets reported.
 
 ---
 
+## Verify it works
+
+If you already have Ollama running and a GPU, this takes about two minutes and
+answers both questions above. Everything else in this document is detail.
+
+Two pulls, ~670 MB total:
+
+```powershell
+ollama pull qwen2.5:0.5b        # ~400 MB  the chat model
+ollama pull nomic-embed-text    # ~275 MB  the embedding model
+```
+
+Then, from the repo:
+
+```powershell
+cd C:\Users\burst\ResearchProject\crsec\reverie\backend_server
+
+$env:CRSEC_LLM_BACKEND       = "local"
+$env:CRSEC_LOCAL_CHAT_MODEL  = "qwen2.5:0.5b"
+$env:CRSEC_LOCAL_EMBED_MODEL = "nomic-embed-text"
+
+python local_llm/test_local_backend.py    # 28 tests, no server, ~1s
+python local_llm/preflight.py --repeat 20
+```
+
+`CRSEC_LOCAL_CHAT_MODEL` is not optional: `local_models.json` ships pointing at a
+model you almost certainly do not have, and the environment variable overrides
+it.
+
+Real output, 13 seconds on one GPU:
+
+```
+====================================================================
+CRSEC local-model preflight
+  base_url    : http://localhost:11434/v1
+  chat_model  : qwen2.5:0.5b
+  embed_model : nomic-embed-text
+====================================================================
+[PASS] 1 server reachable       6 model(s) served
+[PASS] 2 models present         qwen2.5:0.5b, nomic-embed-text
+[PASS] 3 chat path              3.6s, 'processing'
+[PASS] 4 legacy completion      0.0s, "I'm ready to help. Ready to assist with "
+[PASS] 5 embedding path         native=768 padded=1536 deterministic=True
+
+--------------------------------------------------------------------
+6  prompt validity (20 attempt(s) per probe)
+--------------------------------------------------------------------
+   wake_up_hour     0/20 valid   Sam Moore's wake up hour is around 10 pm.  (budget raised 20/20)
+   event_triple     5/20 valid   drafting, petition)  (echo stripped 4/20, budget raised 20/20)
+   pronunciatio     1/20 valid   cozy sleeping down  (budget raised 20/20)
+   decide_to_talk   20/20 valid   No, Mary Smith would not initiate a conversation wit  (budget raised 20/20)
+   daily_plan       20/20 valid   1) Wake up at 6am. / 2) Enjoy a morning jog. / 3) Ea
+--------------------------------------------------------------------
+   overall prompt validity: 46/100 = 46%
+   verdict: Not usable for results. ...
+
+local_backend: chat=1 completion=101 embedding=2 errors=0 | adapted: echo_strips=4 token_floor_raises=82 | chat_model=qwen2.5:0.5b embed_model=nomic-embed-text native_embed_dim=768 completions=via-chat echo_strip=on token_floor=32
+```
+
+### What to look for
+
+**Stages 1–5 all PASS. That is the integration working**, and it is the whole
+claim this code makes: CRSEC's four OpenAI call sites reach a local server, the
+dead `text-davinci-003` engine name is remapped, the legacy `.choices[0].text`
+shape survives, and 768-wide embeddings are padded to the 1536 CRSEC hardcodes.
+If those five pass, nothing is broken.
+
+**Stage 6's 46% is not a failure. It is the measurement.** A 0.5B model is
+supposed to score about this. The number says that roughly half of this model's
+answers would fail CRSEC's own validators, exhaust the five retries in
+`safe_generate_response`, and be silently replaced by fail-safe constants — wake
+up at 8, "is idle", the 😋 emoji. The simulation would still run to completion
+and write a full set of output files. That is precisely the failure mode this
+preflight exists to make visible, and seeing it here means the instrument works.
+
+Read the per-probe lines rather than the total. `decide_to_talk` and
+`daily_plan` at 20/20 are easy formats; `pronunciatio` at 1/20 and
+`wake_up_hour` at 0/20 are where a 0.5B falls apart. The parenthetical notes say
+how much the shim had to adapt the answer to get even that far.
+
+Expect the total to move a few points between runs — temperature is 0.8 and this
+is n=20 per probe. Anything within about 5 points is noise.
+
+### The full picture
+
+`local_llm/model_ladder.md` has the measured comparison across five models:
+qwen2.5 at 0.5B, 1.5B, 3B and 7B, plus llama3.2:3B as a second family. It covers
+what the two response adapters buy (the 7B goes 51% → 71%, entirely on one
+probe), what they do not fix, and the one probe that is broken for every local
+model tested regardless of size.
+
+Two results from it worth knowing before you draw conclusions from your own run:
+validity does **not** rise monotonically with parameter count — qwen2.5:1.5b
+scores highest of the four Qwens — and at 3B the model *family* mattered far more
+than size, with llama3.2:3b scoring 1/20 on `event_triple` where qwen2.5:3b
+scores 20/20.
+
+### Seeing the plateau yourself
+
+One pull and one line, no other changes:
+
+```powershell
+ollama pull qwen2.5:1.5b                       # ~1.0 GB
+$env:CRSEC_LOCAL_CHAT_MODEL = "qwen2.5:1.5b"
+python local_llm/preflight.py --repeat 20      # ~15s, expect around 77%
+```
+
+`qwen2.5:3b` (~1.9 GB, around 68%) is the same one-line change. The jump from
+0.5B to 1.5B is large and real; everything above 1.5B is flat to slightly down,
+which is the finding, not a measurement artifact.
+
+---
+
 ## 0. Where this fits in the repo
 
 State of the fork as of this writing:
